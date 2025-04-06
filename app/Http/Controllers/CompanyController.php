@@ -27,10 +27,10 @@ class CompanyController extends Controller
     {
         $response = (new Show(Auth::user()->company_id))->handle();
 
-        return $this->response(
-            new DefaultResponse(
+        return response()->json(
+            (new DefaultResponse(
                 new ShowResource($response)
-            )
+            ))->toArray()
         );
     }
 

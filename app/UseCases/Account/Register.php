@@ -90,19 +90,23 @@ class Register extends BaseUseCase
     /**
      * Cria a conta
      */
-    public function handle(): void
+    public function handle(): array
     {
         try {
             $this->findUser();
             $this->register();
             $this->store();
-        } catch (Throwable $th) {
-            $this->defaultErrorHandling(
-                $th,
-                [
-                    'userId' => $this->userId,
-                ]
-            );
+
+            return $this->account; //  Retorna os dados da conta
+        }  catch (Throwable $th) {
+            $this->defaultErrorHandling($th, [
+                'userId' => $this->userId,
+            ]);
+
+            throw $th; // 👈 ESSENCIAL: propaga o erro para que o controller capture!
         }
+
+
+        return [];
     }
 }

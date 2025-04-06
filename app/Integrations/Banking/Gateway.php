@@ -11,6 +11,7 @@ use Illuminate\Http\Client\PendingRequest;
 use App\Exceptions\BankingRequestException;
 use Psr\SimpleCache\InvalidArgumentException;
 
+
 class Gateway
 {
     use Logger;
@@ -40,22 +41,21 @@ class Gateway
     ): Response {
         $this->createLog(
             description: 'Request para a BaaS',
-            action:      "GATEWAY_BANKING_REQUEST_CALL_{$action}_INFO",
-            value:       compact('url', 'method', 'params'),
-            error:       null,
-            idUser:      null,
-            idCompany:   null,
-            entityId:    null,
-            entity:      'BANKING'
+            action: "GATEWAY_BANKING_REQUEST_CALL_{$action}_INFO",
+            value: compact('url', 'method', 'params'),
+            error: null,
+            idUser: null,
+            idCompany: null,
+            entityId: null,
+            entity: 'BANKING'
         );
 
         $requestDatetime = Carbon::now();
 
         $response = $this->authenticatedClient()
-            ->{$method}(
-                $url,
-                $params
-            );
+            ->withToken($this->getAuthenticationToken() ?? throw new \Exception('Token de autenticação BaaS não encontrado.'))
+            ->{$method}($url, $params);
+
 
         $responseDatetime = Carbon::now();
 
@@ -67,45 +67,22 @@ class Gateway
         }
 
         if (!$response->successful()) {
-            $expectedStatusCode = [
-                401,
-                404,
-                429,
-            ];
-            $logLevel = in_array($response->status(), $expectedStatusCode, true)
-                ? 'DEBUG'
-                : 'ERROR';
-
-            $this->createLog(
-                description:      'Erro desconhecido ao enviar request para o Saas',
-                action:           "GATEWAY_BANKING_REQUEST_CALL_{$action}_ERROR",
-                value:            compact('url', 'method', 'params', 'code', 'body'),
-                error:            null,
-                idUser:           null,
-                idCompany:        null,
-                entityId:         null,
-                entity:           'BANKING',
-                logLevel:         $logLevel,
-                logType:          'SERVER',
-                requestDatetime:  $requestDatetime,
-                responseDatetime: $responseDatetime,
-            );
-
-            return $response;
+            $this->handleResponseErrors($response, $action);
         }
 
+
         $this->createLog(
-            description:      'Sucesso ao enviar request para a BaaS',
-            action:           "GATEWAY_BANKING_REQUEST_CALL_{$action}_SUCCESS",
-            value:            compact('url', 'method', 'params', 'code', 'body'),
-            error:            null,
-            idUser:           null,
-            idCompany:        null,
-            entityId:         null,
-            entity:           'BANKING',
-            logLevel:         'DEBUG',
-            logType:          'SERVER',
-            requestDatetime:  $requestDatetime,
+            description: 'Sucesso ao enviar request para a BaaS',
+            action: "GATEWAY_BANKING_REQUEST_CALL_{$action}_SUCCESS",
+            value: compact('url', 'method', 'params', 'code', 'body'),
+            error: null,
+            idUser: null,
+            idCompany: null,
+            entityId: null,
+            entity: 'BANKING',
+            logLevel: 'DEBUG',
+            logType: 'SERVER',
+            requestDatetime: $requestDatetime,
             responseDatetime: $responseDatetime,
         );
 
@@ -193,8 +170,9 @@ class Gateway
      */
     public function getAuthUrl(): string
     {
-        return '/auth/' . $this->getClientId() . '/token';
+        return 'auth/' . $this->getClientId() . '/token';
     }
+
 
     /**
      * Obtém o clientId a ser usado na requisação.
@@ -273,8 +251,8 @@ class Gateway
 
         if (!$response->successful()) {
             throw new BankingRequestException(
-                message:    'BANKING_REQUEST_ERROR',
-                response:   $responseCollect->toArray(),
+                message: 'BANKING_REQUEST_ERROR',
+                response: $responseCollect->toArray(),
                 statusCode: $response->status(),
             );
         }
@@ -301,4 +279,50 @@ class Gateway
             $formattedResponse['data']
         ))->response();
     }
+
+    protected function handleResponseErrors(Response $response, string $action): void
+{
+    $status = $response->status();
+    $body   = $response->json();
+
+    match (true) {
+        $status === 400 => throw new InternalErrorException(
+            'BAD_REQUEST_FROM_BANKING',
+            170001002,
+            json_encode($body),
+            'https://developers.vexpenses.com/moreinfo/170001002'
+        ),
+        $status === 401 => throw new InternalErrorException(
+            'BANKING_AUTHENTICATION_FAILED',
+            170001003,
+            json_encode($body),
+            'https://developers.vexpenses.com/moreinfo/170001003'
+        ),
+        $status === 403 => throw new InternalErrorException(
+            'BANKING_FORBIDDEN',
+            170001004,
+            json_encode($body),
+            'https://developers.vexpenses.com/moreinfo/170001004'
+        ),
+        $status === 404 => throw new InternalErrorException(
+            'BANKING_NOT_FOUND',
+            170001005,
+            json_encode($body),
+            'https://developers.vexpenses.com/moreinfo/170001005'
+        ),
+        $status === 422 => throw new InternalErrorException(
+            'BANKING_UNPROCESSABLE_ENTITY',
+            170001006,
+            json_encode($body),
+            'https://developers.vexpenses.com/moreinfo/170001006'
+        ),
+        $status >= 500 => throw new InternalErrorException(
+            'BANKING_INTERNAL_ERROR',
+            170001007,
+            json_encode($body),
+            'https://developers.vexpenses.com/moreinfo/170001007'
+        ),
+        default => null
+    };
+}
 }

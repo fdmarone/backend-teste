@@ -12,11 +12,7 @@ use Illuminate\Support\Facades\Log;
 trait Logger
 {
     /**
-     * Manipula a exception para deixar mais legivel
-     *
-     * @param Throwable $e
-     *
-     * @return array
+     * Formata a exceção para exibição mais legível
      */
     protected static function beautifyException(Throwable $e): array
     {
@@ -28,22 +24,7 @@ trait Logger
     }
 
     /**
-     * Cria um log padrão para o Chronos
-     *
-     * @param string         $description      Não é usado no filtro, pode ser descritivo
-     * @param string         $action           Usado no filtro, texto simples
-     * @param mixed          $value            Conteúdo do log
-     * @param Throwable|null $error            Erro ocorrido (caso seja um log de erro)
-     * @param string|null    $userId           ID do usuário, usuário logado do JWT caso null
-     * @param string|null    $companyId        ID da empresa, empresa do usuário logado do JWT caso null
-     * @param string|null    $entityId         ID da entidade
-     * @param string|null    $entity           Entidade
-     * @param string         $logLevel         Nivel do log: DEBUG/ERROR/INFO/CRITICAL/WARNING
-     * @param string         $logType          Tipo de log: SERVER/AUDIT
-     * @param Carbon|null    $requestDatetime  Datetime do ínicio de uma request
-     * @param Carbon|null    $responseDatetime Datetime da response de uma request
-     *
-     * @return array
+     * Cria um log padrão formatado
      */
     public function createLog(
         string $description,
@@ -54,119 +35,101 @@ trait Logger
         string $idCompany = null,
         string $entityId = null,
         string $entity = null,
-        string $logLevel = 'DEBUG',
-        string $logType = 'SERVER',
+        string $logLevel = 'debug',
+        string $logType = 'server',
         Carbon $requestDatetime = null,
         Carbon $responseDatetime = null
     ): array {
         try {
-            $value    = is_array($value) ? $value : [$value];
             $uuid     = Uuid::uuid4()->toString();
-            $logLevel = mb_strtoupper($logLevel);
+            $logLevel = strtolower($logLevel);
 
+            // Garantia de consistência de tipo
+            $value = is_array($value) ? $value : [$value];
+
+            // Adiciona detalhes da exception, se houver
             if ($error) {
-                $errorLog = self::beautifyException($error);
-                $value    = array_merge($value, compact('errorLog'));
+                $value['error'] = self::beautifyException($error);
             }
 
-            $getUserResponse = $this->getUserFromJwt();
             $requestDuration = null;
-
             if ($requestDatetime && $responseDatetime) {
-                $requestDuration = (float) $requestDatetime->diffInMicroseconds($responseDatetime)
-                    / Carbon::MICROSECONDS_PER_MILLISECOND;
+                $requestDuration = $requestDatetime->diffInMilliseconds($responseDatetime);
             }
+
+            $user = $this->getUserFromJwt();
 
             $context = [
+                'uuid'                          => $uuid,
                 'description'                   => $description,
                 'action'                        => $action,
+                'log_type'                      => strtoupper($logType),
+                'log_level'                     => strtoupper($logLevel),
+                'entity'                        => strtoupper($entity),
                 'entity_id'                     => $entityId,
-                'entity'                        => mb_strtoupper($entity),
-                'log_type'                      => mb_strtoupper($logType),
-                'log_level'                     => $logLevel,
-                'user_id'                       => $idUser ?: data_get($getUserResponse, 'user_id'),
-                'company_id'                    => $idCompany ?: data_get($getUserResponse, 'company_id'),
-                'admin_user_id'                 => data_get($getUserResponse, 'admin_user_id'),
-                'value'                         => $value,
-                'uuid'                          => $uuid,
-                'date'                          => Carbon::now(),
-                'request_datetime'              => $requestDatetime?->format('Y-m-d\TH:i:s.uP'),
-                'response_datetime'             => $responseDatetime?->format('Y-m-d\TH:i:s.uP'),
-                'request_duration_milliseconds' => $requestDuration,
+                'user_id'                       => $idUser ?? data_get($user, 'user_id'),
+                'company_id'                    => $idCompany ?? data_get($user, 'company_id'),
+                'admin_user_id'                 => data_get($user, 'admin_user_id'),
                 'origin'                        => request()->headers->get('origin'),
                 'referer'                       => request()->headers->get('referer'),
                 'url'                           => request()->url(),
-                'ip'                            => request()->server('REMOTE_ADDR'),
+                'ip'                            => request()->ip(),
                 'endpoint'                      => [
                     'url'    => request()->url(),
                     'method' => request()->getMethod(),
                 ],
+                'date'                          => now()->toISOString(),
+                'request_datetime'              => $requestDatetime?->toISOString(),
+                'response_datetime'             => $responseDatetime?->toISOString(),
+                'request_duration_milliseconds' => $requestDuration,
+                'value'                         => $value,
             ];
 
-            Log::channel('log_service')->{$logLevel}($context['description'], $context);
+            Log::channel('log_service')->{$logLevel}($description, $context);
+
+            return [
+                'success' => true,
+                'message' => 'Log feito com sucesso',
+                'uuid'    => $uuid,
+                'data'    => $context,
+            ];
         } catch (Throwable $e) {
             return [
                 'success' => false,
                 'message' => 'Falha ao enviar Log',
-                'data'    => $e,
+                'data'    => self::beautifyException($e),
             ];
         }
-
-        return [
-            'success' => true,
-            'message' => 'Log feito com sucesso',
-            'data'    => $context,
-            'uuid'    => $uuid,
-        ];
     }
 
     /**
-     * Tratamento padrão de exceptions
-     *
-     * @param Throwable   $exception
-     * @param mixed|null  $data
-     * @param string|null $idEntity
-     * @param string|null $entity
-     * @param string      $level
-     *
-     * @return void
+     * Tratamento padrão de erros internos
      */
     public function defaultErrorHandling(
         Throwable $exception,
         $data = null,
         string $idEntity = null,
         string $entity = null,
-        string $level = 'ERROR'
+        string $level = 'error'
     ): void {
-        // Caso seja um erro esperado BaseException, continua sem criar log
-        // de erro inesperado
         if ($exception instanceof BaseException) {
             throw $exception;
         }
 
-        $description = get_called_class();
-
-        // Formatando o nome do método que o erro ocorreu
-        $trace    = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
-        $function = $trace[count($trace) - 1]['function'];
-        $action   = mb_strtoupper(Str::snake($function)) . '_ERROR';
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+        $caller = $trace[1]['function'] ?? 'unknown_method';
 
         $this->createLog(
-            $description,
-            $action,
-            $data,
-            $exception,
-            null,
-            null,
-            $idEntity,
-            $entity,
-            $level
+            description: get_called_class(),
+            action: strtoupper(Str::snake($caller)) . '_ERROR',
+            value: $data,
+            error: $exception,
+            entityId: $idEntity,
+            entity: $entity,
+            logLevel: $level
         );
-
-        dump($exception);
-
-        // Para evitar propagação de log duplicado, o erro é propagado como
-        // BaseException
+        dump(get_class($exception), $exception->getMessage());
+        // Lançando erro genérico controlado
         throw new BaseException(
             'UNKNOW_ERROR_TRY_AGAIN',
             0

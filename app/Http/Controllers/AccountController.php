@@ -23,12 +23,30 @@ class AccountController extends Controller
      */
     public function register(string $userId): JsonResponse
     {
-        (new Register($userId, Auth::user()->company_id))->handle();
+        try {
+            $accountData = (new Register($userId, Auth::user()->company_id))->handle();
 
-        return $this->response(
-            new DefaultResponse()
-        );
+            return $this->response(
+                new DefaultResponse(
+                    data: ['account' => $accountData]
+                )
+            );
+        } catch (\App\Exceptions\BaseException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'code'    => $e->getCode(),
+            ], 502); // Ou outro status apropriado
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'INTERNAL_ERROR',
+                'details' => $e->getMessage(),
+            ], 500);
+        }
     }
+
+
 
     /**
      * Desbloqueia a conta bancária

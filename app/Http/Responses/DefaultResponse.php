@@ -105,4 +105,9 @@ class DefaultResponse
             $this->parameters['data'] = null;
         }
     }
+
+    public function getHttpCode(): int
+    {
+        return $this->parameters['code'] ?? 200;
+    }
 }

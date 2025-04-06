@@ -66,7 +66,8 @@ class BaseException extends \Exception
      */
     public function render(Request $request): JsonResponse
     {
-        $responseCode = !is_null($this->responseCode) ? $this->responseCode : 200;
+        $responseCode = $this->responseCode ?? 500;
+
 
         return response()->json(
             [
